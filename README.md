@@ -21,7 +21,7 @@ An optimized, cloud-native automation pipeline that monitors upstream releases o
 ## ⚙️ Automated Pipeline Policies
 
 ### 🕒 Build Schedule
-* **Execution Interval**: Builds trigger automatically every week at **11:50 PM UTC On Tuesdays, Thursdays & Saturdays**, as well as on manual execution via `workflow_dispatch`.
+* **Execution Interval**: Builds trigger automatically every week at **12:13 AM UTC On Tuesdays, Thursdays & Saturdays**, as well as on manual execution via `workflow_dispatch`.
 * **Smart Verification**: The compiler checks upstream releases first. If a brand-new upstream version of `MediaInfo` is detected, a **Clean Build** is triggered. If no upstream updates exist, the workflow automatically force-rebuilds the current version to apply the latest security patches to all bundled dependencies.
 
 ### 💻 Target Architectures

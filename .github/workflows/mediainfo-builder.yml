@@ -2,9 +2,12 @@ name: Build MediaInfo
 
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
   schedule:
-    # Runs Every Week At 11:50 PM UTC On Tuesdays, Thursdays & Saturdays.
-    - cron: '50 23 * * 2,4,6'
+    # Runs Every Week At 12:13 AM UTC On Tuesdays, Thursdays & Saturdays.
+    - cron: '13 0 * * 2,4,6'
   workflow_dispatch:
 
 permissions:
@@ -12,17 +15,19 @@ permissions:
 
 jobs:
   check-version:
-    name: Safety Measure & Version Check
+    name: Pre Checks
     runs-on: ubuntu-26.04
     timeout-minutes: 140
     outputs:
-      build_needed: ${{ steps.check.outputs.build_needed }}
-      version: ${{ steps.check.outputs.version }}
+      build_needed: ${{ steps.check.outputs.build_needed || 'False' }}
+      version: ${{ steps.check.outputs.version || 'Skipped' }}
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v7
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
 
-      - name: Check Upstream Version vs Latest Release
+      - name: Check Upstream Version
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,31 +54,35 @@ jobs:
           fi
 
   build-binaries:
-    # Uses the visual_arch (x64 and ARM64)
-    name: Compile Binaries (${{ matrix.visual_arch }})
+    name: Compile Binaries
     needs: check-version
     if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.check-version.outputs.build_needed == 'true'
-    runs-on: ${{ matrix.runner }}
+    # Uses the visual_arch (x64 and ARM64)
+    runs-on: ${{ matrix.visual_arch == 'LinuxARM64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     timeout-minutes: 240 # 4-hour safety net for heavy compilation
     strategy:
       matrix:
-        include:
-          - arch: amd64
-            visual_arch: x64
-            runner: ubuntu-26.04
-            ext_name: linux64
-          - arch: arm64
-            visual_arch: ARM64
-            runner: ubuntu-26.04-arm
-            ext_name: linuxarm64
+        visual_arch: [Linux64, LinuxARM64]
     steps:
-      - name: Checkout code
+      - name: Free Disk-Space
+        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /opt/ghc /usr/local/.ghcup /usr/local/lib/android && df -h
+
+      - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Docker Buildx
+      - name: Set Up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build, Extract, and Compress Binary
+      - name: Build Base Image
+        id: vars
+        run: |
+          set -euo pipefail
+          case "${{ matrix.visual_arch }}" in
+            Linux64) echo "arch=amd64" >> $GITHUB_OUTPUT; echo "ext_name=linux64" >> $GITHUB_OUTPUT ;;
+            LinuxARM64) echo "arch=arm64" >> $GITHUB_OUTPUT; echo "ext_name=linuxarm64" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Build, Extract & Archive MediaInfo Binary
         run: |
           set -euo pipefail
           mkdir -p ./output ./artifacts
@@ -82,7 +91,7 @@ jobs:
           # --cache-to type=gha,mode=max,scope=mediainfo-${{ matrix.arch }} \
           # --cache-from type=gha,scope=mediainfo-${{ matrix.arch }} \
           docker buildx build \
-            --platform linux/${{ matrix.arch }} \
+            --platform linux/${{ steps.vars.outputs.arch }} \
             --build-arg MI_VERSION=${{ needs.check-version.outputs.version }} \
             --output type=local,dest=./output \
             -f Dockerfile .
@@ -90,15 +99,15 @@ jobs:
           # Navigate to output, make executable, and compress into a real tar.xz archive
           cd ./output
           chmod +x mediainfo
-          TAR_FILENAME="mediainfo-master-latest-${{ matrix.ext_name }}-gpl.tar.xz"
+          TAR_FILENAME="mediainfo-master-latest-${{ steps.vars.outputs.ext_name }}-gpl.tar.xz"
           tar -cJf "../artifacts/$TAR_FILENAME" mediainfo
           cd ..
 
-      - name: Upload Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mediainfo-${{ matrix.arch }}
-          path: ./artifacts/mediainfo-master-latest-${{ matrix.ext_name }}-gpl.tar.xz
+          name: mediainfo-${{ steps.vars.outputs.arch }}
+          path: ./artifacts/mediainfo-master-latest-${{ steps.vars.outputs.ext_name }}-gpl.tar.xz
           retention-days: 1
 
   release-and-cleanup:
@@ -108,7 +117,10 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 72 # Safety net for GitHub API uploads
     steps:
-      - name: Checkout code
+      - name: Free Disk-Space
+        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /opt/ghc /usr/local/.ghcup /usr/local/lib/android && df -h
+
+      - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 2 # Required to fetch the previous commit hash
@@ -141,7 +153,7 @@ jobs:
             gh release edit "$OLD_RELEASE_TAG" --title "$NEW_OLD_TITLE" || true
           fi
 
-      - name: Create GitHub Release
+      - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.check-version.outputs.version }}
@@ -157,15 +169,17 @@ jobs:
           fi
 
           # Generate dynamic text variables
-          DATE_STR=$(date -u +'%d/%m/%Y At %H:%M')
+          DATE_STR=$(date -u +'%d/%m/%Y At %I:%M %p')
           COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
           PREV_HASH=$(git log -2 --pretty=%H | tail -n 1)
 
           # Create The Release Body.
           cat <<EOF > release_notes.txt
-          This Latest Stable Automated Build Of MediaInfo Created On $DATE_STR
-          $COMMIT_MSG
-          This reverts commit $PREV_HASH.
+          **This Latest Stable Automated Build Of MediaInfo Created On $DATE_STR**
+
+          \`$COMMIT_MSG\`
+
+          \`This Reverts Commit\` $PREV_HASH.
           EOF
 
           echo "Creating release for $TAG_NAME..."
@@ -173,7 +187,7 @@ jobs:
             --title "MediaInfo $VERSION (Executable) - Latest" \
             --notes-file release_notes.txt
 
-      - name: Cleanup Old Releases (Keep Last 4)
+      - name: Cleanup Old Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -200,12 +214,15 @@ jobs:
     if: github.event_name == 'schedule'
     timeout-minutes: 61 # Safety net for git push
     steps:
-      - name: Checkout code
+      - name: Free Disk-Space
+        run: df -h && sudo apt-get clean && docker system prune -a -f && sudo rm -rf /opt/ghc /usr/local/.ghcup /usr/local/lib/android && df -h
+
+      - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Push Keepalive Commit
+      - name: Push Commit
         run: |
           set -euo pipefail
 

@@ -9,22 +9,23 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG MI_VERSION
 # Intentionally Omit Extra Libraries To Ensure The Binary Remains Highly Portable.
 # 1. Install Prerequisites Required For MediaInfo Compilation.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    wget \
-    xz-utils \
-    ca-certificates \
-    automake \
+RUN apt-get update && apt-get dist-upgrade -y && apt-get install -y --no-install-recommends \
     autoconf \
+    automake \
+    build-essential \
+    ca-certificates \
+    curl \
     libtool \
     pkg-config \
+    wget \
+    xz-utils \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Download & Extract Mediainfo Source Safely With CI-Friendly wget Progress.
-RUN wget --progress=dot:giga "https://mediaarea.net/download/binary/mediainfo/${MI_VERSION}/MediaInfo_CLI_${MI_VERSION}_GNU_FromSource.tar.xz" -O mediainfo_src.tar.xz && \
-    tar -xf mediainfo_src.tar.xz
+RUN wget --https-only --retry-connrefused --waitretry=5 --tries=5 --progress=dot:giga "https://mediaarea.net/download/binary/mediainfo/${MI_VERSION}/MediaInfo_CLI_${MI_VERSION}_GNU_FromSource.tar.xz" -O mediainfo_src.tar.xz && \
+    tar -xf mediainfo_src.tar.xz && \
+    rm -rf mediainfo_src.tar.xz
 
 WORKDIR /MediaInfo_CLI_GNU_FromSource
 
