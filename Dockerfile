@@ -1,4 +1,4 @@
-FROM debian:forky-slim AS builder
+FROM debian:trixie-slim AS builder
 
 # Enforce Strict Error Handling. Instantly Aborts On Any Hidden Failure.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
